@@ -1068,7 +1068,8 @@
             "vscode",
             "vscode-insiders",
             "windsurf",
-            "cursor"
+            "cursor",
+            "zed"
           ],
           "type": "string"
         },

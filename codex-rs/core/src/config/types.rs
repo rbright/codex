@@ -276,6 +276,9 @@ pub enum UriBasedFileOpener {
     #[serde(rename = "cursor")]
     Cursor,
 
+    #[serde(rename = "zed")]
+    Zed,
+
     /// Option to disable the URI-based file opener.
     #[serde(rename = "none")]
     None,
@@ -288,6 +291,7 @@ impl UriBasedFileOpener {
             UriBasedFileOpener::VsCodeInsiders => Some("vscode-insiders"),
             UriBasedFileOpener::Windsurf => Some("windsurf"),
             UriBasedFileOpener::Cursor => Some("cursor"),
+            UriBasedFileOpener::Zed => Some("zed"),
             UriBasedFileOpener::None => None,
         }
     }
