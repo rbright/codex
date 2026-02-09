@@ -16,6 +16,7 @@ use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::VIEW_IMAGE_TOOL_NAME;
 use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
+use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelInfo;
 use serde::Deserialize;
 use serde::Serialize;
@@ -29,6 +30,7 @@ pub(crate) struct ToolsConfig {
     pub shell_type: ConfigShellToolType,
     pub apply_patch_tool_type: Option<ApplyPatchToolType>,
     pub web_search_mode: Option<WebSearchMode>,
+    pub supports_image_input: bool,
     pub collab_tools: bool,
     pub collaboration_modes_tools: bool,
     pub memory_tools: bool,
@@ -84,6 +86,7 @@ impl ToolsConfig {
             shell_type,
             apply_patch_tool_type,
             web_search_mode: *web_search_mode,
+            supports_image_input: model_info.input_modalities.contains(&InputModality::Image),
             collab_tools: include_collab_tools,
             collaboration_modes_tools: include_collaboration_modes_tools,
             memory_tools: include_memory_tools,
@@ -517,6 +520,29 @@ fn create_send_input_tool() -> ToolSpec {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["id".to_string(), "message".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_resume_agent_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "id".to_string(),
+        JsonSchema::String {
+            description: Some("Agent id to resume.".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "resume_agent".to_string(),
+        description:
+            "Resume a previously closed agent by id so it can receive send_input and wait calls."
+                .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["id".to_string()]),
             additional_properties: Some(false.into()),
         },
     })
@@ -1403,17 +1429,21 @@ pub(crate) fn build_specs(
         Some(WebSearchMode::Disabled) | None => {}
     }
 
-    builder.push_spec_with_parallel_support(create_view_image_tool(), true);
-    builder.register_handler("view_image", view_image_handler);
+    if config.supports_image_input {
+        builder.push_spec_with_parallel_support(create_view_image_tool(), true);
+        builder.register_handler("view_image", view_image_handler);
+    }
 
     if config.collab_tools {
         let collab_handler = Arc::new(CollabHandler);
         builder.push_spec(create_spawn_agent_tool());
         builder.push_spec(create_send_input_tool());
+        builder.push_spec(create_resume_agent_tool());
         builder.push_spec(create_wait_tool());
         builder.push_spec(create_close_agent_tool());
         builder.register_handler("spawn_agent", collab_handler.clone());
         builder.register_handler("send_input", collab_handler.clone());
+        builder.register_handler("resume_agent", collab_handler.clone());
         builder.register_handler("wait", collab_handler.clone());
         builder.register_handler("close_agent", collab_handler);
     }
@@ -1636,6 +1666,11 @@ mod tests {
                 external_web_access: Some(true),
             },
             create_view_image_tool(),
+            create_spawn_agent_tool(),
+            create_send_input_tool(),
+            create_resume_agent_tool(),
+            create_wait_tool(),
+            create_close_agent_tool(),
         ] {
             expected.insert(tool_name(&spec).to_string(), spec);
         }
@@ -1670,7 +1705,13 @@ mod tests {
         let (tools, _) = build_specs(&tools_config, None, &[]).build();
         assert_contains_tool_names(
             &tools,
-            &["spawn_agent", "send_input", "wait", "close_agent"],
+            &[
+                "spawn_agent",
+                "send_input",
+                "resume_agent",
+                "wait",
+                "close_agent",
+            ],
         );
     }
 
@@ -1824,6 +1865,11 @@ mod tests {
                 "apply_patch",
                 "web_search",
                 "view_image",
+                "spawn_agent",
+                "send_input",
+                "resume_agent",
+                "wait",
+                "close_agent",
             ],
         );
     }
@@ -1846,6 +1892,11 @@ mod tests {
                 "apply_patch",
                 "web_search",
                 "view_image",
+                "spawn_agent",
+                "send_input",
+                "resume_agent",
+                "wait",
+                "close_agent",
             ],
         );
     }
@@ -1870,6 +1921,11 @@ mod tests {
                 "apply_patch",
                 "web_search",
                 "view_image",
+                "spawn_agent",
+                "send_input",
+                "resume_agent",
+                "wait",
+                "close_agent",
             ],
         );
     }
@@ -1894,6 +1950,11 @@ mod tests {
                 "apply_patch",
                 "web_search",
                 "view_image",
+                "spawn_agent",
+                "send_input",
+                "resume_agent",
+                "wait",
+                "close_agent",
             ],
         );
     }
@@ -1915,6 +1976,11 @@ mod tests {
                 "request_user_input",
                 "web_search",
                 "view_image",
+                "spawn_agent",
+                "send_input",
+                "resume_agent",
+                "wait",
+                "close_agent",
             ],
         );
     }
@@ -1937,6 +2003,11 @@ mod tests {
                 "apply_patch",
                 "web_search",
                 "view_image",
+                "spawn_agent",
+                "send_input",
+                "resume_agent",
+                "wait",
+                "close_agent",
             ],
         );
     }
@@ -1958,6 +2029,11 @@ mod tests {
                 "request_user_input",
                 "web_search",
                 "view_image",
+                "spawn_agent",
+                "send_input",
+                "resume_agent",
+                "wait",
+                "close_agent",
             ],
         );
     }
@@ -1980,7 +2056,35 @@ mod tests {
                 "apply_patch",
                 "web_search",
                 "view_image",
+                "spawn_agent",
+                "send_input",
+                "resume_agent",
+                "wait",
+                "close_agent",
             ],
+        );
+    }
+
+    #[test]
+    fn test_non_multimodal_models_exclude_view_image() {
+        let config = test_config();
+        let mut model_info = ModelsManager::construct_model_info_offline("gpt-5.1", &config);
+        model_info.input_modalities = vec![InputModality::Text];
+        let mut features = Features::with_defaults();
+        features.enable(Feature::CollaborationModes);
+        let tools_config = ToolsConfig::new(&ToolsConfigParams {
+            model_info: &model_info,
+            features: &features,
+            web_search_mode: Some(WebSearchMode::Cached),
+        });
+        let (tools, _) = build_specs(&tools_config, Some(HashMap::new()), &[]).build();
+
+        assert!(
+            !tools
+                .iter()
+                .map(|t| t.spec.name())
+                .any(|name| name == VIEW_IMAGE_TOOL_NAME),
+            "view_image should be excluded for non-multimodal models"
         );
     }
 
@@ -2003,6 +2107,11 @@ mod tests {
                 "apply_patch",
                 "web_search",
                 "view_image",
+                "spawn_agent",
+                "send_input",
+                "resume_agent",
+                "wait",
+                "close_agent",
             ],
         );
     }
@@ -2026,6 +2135,11 @@ mod tests {
                 "request_user_input",
                 "web_search",
                 "view_image",
+                "spawn_agent",
+                "send_input",
+                "resume_agent",
+                "wait",
+                "close_agent",
             ],
         );
     }
